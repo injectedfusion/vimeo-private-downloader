@@ -64,9 +64,15 @@ function loadVideo(num, cb) {
 
 function processFile(type, baseUrl, initData, segments, filename, cb) {
   const filePath = `./parts/${filename}`;
-  if (fs.existsSync(filePath)) {
+  const downloadingFlag = `./parts/.${filename}~`;
+  
+  if(fs.existsSync(downloadingFlag)) {
+    log("⚠️", ` ${filename} - ${type} is incomplete, restarting the download`);
+  } else if (fs.existsSync(filePath)) {
     log("⚠️", ` ${filename} - ${type} already exists`);
     return cb();
+  } else {
+    fs.writeFileSync(downloadingFlag, '');
   }
 
   const segmentsUrl = segments.map(seg => baseUrl + seg.url);
@@ -78,7 +84,7 @@ function processFile(type, baseUrl, initData, segments, filename, cb) {
     flags: "a"
   });
 
-  combineSegments(type, 0, segmentsUrl, output, filePath, err => {
+  combineSegments(type, 0, segmentsUrl, output, filePath, downloadingFlag, err => {
     if (err) {
       log("⚠️", ` ${err}`);
     }
@@ -88,8 +94,9 @@ function processFile(type, baseUrl, initData, segments, filename, cb) {
   });
 }
 
-function combineSegments(type, i, segmentsUrl, output, filename, cb) {
+function combineSegments(type, i, segmentsUrl, output, filename, downloadingFlag, cb) {
   if (i >= segmentsUrl.length) {
+    fs.unlinkSync(downloadingFlag);
     log("🏁", ` ${filename} - ${type} done`);
     return cb();
   }
@@ -100,17 +107,22 @@ function combineSegments(type, i, segmentsUrl, output, filename, cb) {
     `Downloading ${type} segment ${i}/${segmentsUrl.length} of ${filename}`
   );
 
-  https
+  let req = https
     .get(segmentsUrl[i], res => {
       res.on("data", d => output.write(d));
 
       res.on("end", () =>
-        combineSegments(type, i + 1, segmentsUrl, output, filename, cb)
+        combineSegments(type, i + 1, segmentsUrl, output, filename, downloadingFlag, cb)
       );
     })
     .on("error", e => {
       cb(e);
     });
+
+  req.setTimeout(7000, function () {
+    log("⚠️", 'Timeout. Retrying');
+    combineSegments(type, i, segmentsUrl, output, filename, downloadingFlag, cb);
+  });
 }
 
 function getJson(url, cb) {
